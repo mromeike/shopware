@@ -40,6 +40,10 @@ class BenchExtension implements ExtensionInterface
             ->setProjectDir($_ENV['PROJECT_DIR'] ?? null)
             ->bootstrap();
 
+        if (!static::parseEnvVar('FORCE_INSTALL', true)) {
+            goto set_database_url;
+        }
+
         (new Fixtures())->load(__DIR__ . '/data.json');
 
         // TODO: Resolve autoloading to [Commercial]/tests/performance/bench so native phpbench `core.extensions` can be used
@@ -77,6 +81,7 @@ class BenchExtension implements ExtensionInterface
             }
         }
 
+        set_database_url:
         if (isset($url)) {
             $_SERVER['DATABASE_URL'] = $url;
         }
