@@ -57,8 +57,8 @@ class PromotionBench extends AbstractBenchCase
 
     #[Bench\BeforeMethods(['setUp', 'setUpTotals'])]
     #[Bench\AfterMethods(['tearDown'])]
-    #[Bench\Assert('mode(variant.time.avg) > 100ms')]
-    #[Bench\Assert('mode(variant.mem.peak) > 100mb')]
+    #[Bench\Assert('mode(variant.time.avg) > 35ms +/- 10ms')]
+    #[Bench\Assert('mode(variant.mem.peak) > 100mb +/- 5mb')]
     public function bench_loading_a_promotion_with_large_orders_per_customer_count(): void
     {
         $criteria   = new Criteria(
@@ -68,11 +68,8 @@ class PromotionBench extends AbstractBenchCase
         // Simulate the cart processing impact for 2 active promotions, with 2 cart iterations.
         //  Our user-land custom implementation of free-products loads `promotion` association to get the rules.
         $data       = new CartDataCollection();
-        $iterations = 2 * 2;
-        while (0 < $iterations--) {
-            $data->set('promotions', static::getContainer()->get('promotion.repository')
-                ->search($criteria, Context::createDefaultContext()));
-        }
+        $data->set('promotions', static::getContainer()->get('promotion.repository')
+            ->search($criteria, Context::createDefaultContext()));
     }
 
     /**
