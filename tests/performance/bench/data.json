@@ -3750,5 +3750,13 @@
       "stock": 4,
       "isCloseout": false
     }
+  ],
+  "promotion": [
+    {
+      "id": "{simple-promotion}",
+      "name": "simple-promotion",
+      "active": true,
+      "priority": 1
+    }
   ]
 }
