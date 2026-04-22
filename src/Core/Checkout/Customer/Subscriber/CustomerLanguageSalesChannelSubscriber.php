@@ -72,6 +72,10 @@ class CustomerLanguageSalesChannelSubscriber implements EventSubscriberInterface
                 continue;
             }
 
+            if (0 === $salesChannels->count()) {
+                return;
+            }
+
             $event->getExceptions()->add(
                 $this->createLanguageNotInSalesChannelViolation($candidate['languageId'])
             );
