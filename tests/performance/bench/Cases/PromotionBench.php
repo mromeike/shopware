@@ -27,6 +27,7 @@ class PromotionBench extends AbstractBenchCase
     #[Bench\BeforeMethods(['setUp'])]
     #[Bench\AfterMethods(['tearDown'])]
     #[Bench\Assert('mode(variant.time.avg) < 10ms')]
+    #[Bench\Assert('mode(variant.mem.peak) < 50mb')]
     public function bench_loading_a_simple_promotion(): void
     {
         $criteria = new Criteria(
