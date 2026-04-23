@@ -3757,6 +3757,58 @@
       "name": "simple-promotion",
       "active": true,
       "priority": 1
+    },
+    {
+      "id": "{large-promotion-2}",
+      "name": "large-promotion-2",
+      "active": true,
+      "priority": 20,
+      "useCodes": true,
+      "useIndividualCodes": true,
+      "salesChannels": [
+        {
+          "id": "{large-promotion-2-sc}",
+          "salesChannelId": "{sales-channel}",
+          "priority": 20
+        }
+      ],
+      "individualCodes": [
+        {
+          "id": "{large-promotion-2-code}",
+          "code": "test2",
+          "payload": null
+        }
+      ]
+    },
+    {
+      "id": "{large-promotion-1}",
+      "name": "large-promotion-1",
+      "active": true,
+      "priority": 20,
+      "useCodes": true,
+      "code": "LPT1",
+      "salesChannels": [
+        {
+          "id": "{large-promotion-1-sc}",
+          "salesChannelId": "{sales-channel}",
+          "priority": 20
+        }
+      ]
+    },
+    {
+      "id": "{large-promotion-0}",
+      "name": "large-promotion-0",
+      "active": true,
+      "priority": 20,
+      "useCodes": true,
+      "code": "LPT0",
+      "salesChannels": [
+        {
+          "id": "{large-promotion-0-sc}",
+          "salesChannelId": "{sales-channel}",
+          "priority": 20
+        }
+      ]
     }
   ]
 }
