@@ -349,7 +349,7 @@ class PromotionRedemptionUpdaterTest extends TestCase
 
         $actualVoucherB = Uuid::fromBytesToHex($promotions[0]['id']) === $this->ids->get('voucherB') ? $promotions[0] : $promotions[1];
         static::assertNotEmpty($actualVoucherB);
-        // voucherB is used twice, it's mean group by works
+        // voucherB is used twice, it means group by works
         static::assertSame('1', $actualVoucherB['order_count']);
         $customerCount = json_decode((string) $actualVoucherB['orders_per_customer_count'], true, 512, \JSON_THROW_ON_ERROR);
         static::assertSame(1, $customerCount[$this->ids->get('customer')]);
