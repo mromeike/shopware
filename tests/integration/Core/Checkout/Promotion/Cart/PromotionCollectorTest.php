@@ -197,7 +197,7 @@ class PromotionCollectorTest extends TestCase
         );
 
         // Generate large number of random customer entries in the promotion's `orders_per_customer_count` field.
-        $this->setUpTotals([$promotionKey => self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT]);
+        $this->setUpTotals([$promotionKey => self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT], maxUsesPerCustomer: 5);
 
         return $promotionId;
     }
