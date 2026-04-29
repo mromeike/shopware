@@ -95,15 +95,17 @@ class PromotionCollectorTest extends TestCase
 
         $productData = $product->build();
         $productData['taxId'] = $taxId;
-        
+
         static::getContainer()->get('product.repository')
             ->create([$productData], Context::createDefaultContext());
         $profiler->stop('create-product');
 
         $context = $this->getContext();
+
         $profiler->start('create-promotion');
         $promotionId = $this->createPromotionWithLargeNumberOfOrdersPerCustomerCountData($context);
         $profiler->stop('create-promotion');
+
         // Take measurements on timing and also memory, using the symfony profiler (i.e. stopwatch).
         $profiler->start('add-product');
         $cart = $this->addProductToCart($product->id, $context);
@@ -115,8 +117,8 @@ class PromotionCollectorTest extends TestCase
         $profiler->start('load-promotion');
         $promotion = $this->promotionRepository->search($criteria, $context->getContext())->first();
         $profiler->stop('load-promotion');
-        static::assertInstanceOf(PromotionEntity::class, $promotion);
 
+        static::assertInstanceOf(PromotionEntity::class, $promotion);
         $discounts = $promotion->getDiscounts();
         static::assertNotNull($discounts, 'Promotion should have discounts');
         $discount = $discounts->first();
@@ -135,7 +137,7 @@ class PromotionCollectorTest extends TestCase
         dump(\array_map('strval', $profiler->getRootSectionEvents()));
         return; // TODO: Complete assertions; add table output, if possible.
 
-        // Make asserts on promotion fields' size/count, profiler min-loding speed and memory usage.
+        // Make asserts on promotion fields' size/count, profiler min-loading speed and memory usage.
         $addProductEvent = $profiler->getEvent('add-product');
         static::assertGreaterThan(10.0, $addProductEvent->getDuration() / 1000); // divide ms by 1000 to get seconds value
         static::assertGreaterThan(10.0, $addProductEvent->getMemory() / (1024**2)); // divide by 1024^2 to get MB value
@@ -151,7 +153,7 @@ class PromotionCollectorTest extends TestCase
      */
     private function createPromotionWithLargeNumberOfOrdersPerCustomerCountData(SalesChannelContext $context): string
     {
-        $promotionId = $this->ids->create('large-promotion-0');
+        $promotionId = $this->ids->create($promotionKey = 'large-promotion-0');
         $validFrom = new \DateTime();
         $validFrom->sub(new \DateInterval('PT1H'));
         $validUntil = new \DateTime();
@@ -194,20 +196,8 @@ class PromotionCollectorTest extends TestCase
             $context->getContext()
         );
 
-        if (\file_exists(__DIR__.'/_fixtures/promotion__orders_per_customer_count.json')) {
-            // If available, use the fixture, to speed things up. TODO: Remove json_encode/json_decode, and use constant count value.
-            $json = \file_get_contents(__DIR__.'/_fixtures/promotion__orders_per_customer_count.json');
-
-            static::getContainer()->get(Connection::class)
-                ->executeStatement('UPDATE promotion SET order_count = :count, orders_per_customer_count = :customerCount WHERE id = :id', [
-                    'id' => Uuid::fromHexToBytes($promotionId),
-                    'count' => self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT,
-                    'customerCount' => $json,
-                ], ['id' => ParameterType::BINARY]);
-        } else {
-            // Generate large number of random customer entries in the promotion's `orders_per_customer_count` field.
-            $this->setUpTotals(['large-promotion-0' => self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT]);
-        }
+        // Generate large number of random customer entries in the promotion's `orders_per_customer_count` field.
+        $this->setUpTotals([$promotionKey => self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT]);
 
         return $promotionId;
     }

@@ -16,10 +16,10 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  *
  * Available env-var parameters:
  *
- * - `PRINT_MEM_ALLOC_ERROR`: Prints the error caused by totals' JSON not meeting expected size (`1-10mb`).
+ * - `PRINT_MEM_ALLOC_ERROR`: Prints the error caused by totals' JSON not meeting expected size (`2-10mb`).
  *
  * @property IdsCollection $ids
- * 
+ *
  * @internal - only for performance benchmarks
  */
 trait PromotionBenchShortHands
@@ -57,8 +57,6 @@ trait PromotionBenchShortHands
             } catch (\Throwable $e) {
                 \array_key_exists('PRINT_MEM_ALLOC_ERROR', $_SERVER) ? \printf("%s\n", $e->getMessage()) : throw $e;
             }
-
-            #\file_put_contents(__DIR__.'/../../../../integration/Core/Promotion/Cart/_fixtures/promotion__orders_per_customer_count.json', $json);
         }
     }
 
