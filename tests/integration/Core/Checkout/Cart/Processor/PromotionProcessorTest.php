@@ -125,7 +125,7 @@ class PromotionProcessorTest extends TestCase
 
         yield 'Do not add error when cart is zero if promotion is global' => [
             (new LineItem(Uuid::randomHex(), PromotionProcessor::LINE_ITEM_TYPE, Uuid::randomHex(), 1))
-            ->setPayload(['promotionCodeType' => 'global']),
+                ->setPayload(['promotionCodeType' => 'global']),
             false,
         ];
 

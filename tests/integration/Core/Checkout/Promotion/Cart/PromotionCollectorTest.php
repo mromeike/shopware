@@ -37,8 +37,19 @@ class PromotionCollectorTest extends TestCase
 
     /**
      * The number of random customer entries to generate for `promotion.orders_per_customer_count`.
+     *
+     * Note: The would-be number of orders and therefor customers (in a worst-case scenario),
+     *  across 55 promotions in our system, if they were active at the same time and within the same valid-period,
+     *   amounts to `637_725`.
+     *
+     * TODO: Distribute this number across multiple promotions, which are loaded during cart processing.
+     *  The loading will only occur once (per request), but we're most interested in the memory footprint of them.
+     *   This is because the availability requires the `orders_per_customer_count` field to be loaded in full,
+     *  which will be several MB large, if not cleared to protect performance (the memory limit is recommended as `128mb`).
+     *   So whenever the promotion is used over a long timeframe, it will accumulate customer entries in the JSON.
+     *  From that follows, that in a long-running system with many customers, it would lead to unexpected degradation over time.
      */
-    private const SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT = 60_000;
+    private const SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT = 100_000;
 
     /**
      * @see \Shopware\Core\Checkout\Promotion\Cart\PromotionCollector::REQUIRED_DAL_ASSOCIATIONS
