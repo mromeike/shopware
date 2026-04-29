@@ -5,12 +5,10 @@ declare(strict_types=1);
 namespace Shopware\Tests\Bench\Cases;
 
 use PhpBench\Attributes as Bench;
-use PHPUnit\Framework\TestCase;
 use Shopware\Core\Checkout\Cart\LineItem\CartDataCollection;
 use Shopware\Core\Checkout\Promotion\Gateway\PromotionGateway;
 use Shopware\Core\Framework\Context;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\Criteria;
-use Shopware\Core\Framework\Uuid\Uuid;
 use Shopware\Core\System\SalesChannel\Context\SalesChannelContextService;
 use Shopware\Tests\Bench\AbstractBenchCase;
 use Shopware\Tests\Bench\Cases\Traits\PromotionBenchShortHands;
