@@ -28,9 +28,10 @@ trait PromotionBenchShortHands
      * Set up method for given promotion's totals.
      *
      * @param non-empty-array<string, positive-int> $promotionIds
+     * @param positive-int                          $maxUsesPerCustomer
      * @throws \JsonException when the JSON serilaization fails
      */
-    private function setUpTotals(array $promotionIds): void
+    private function setUpTotals(array $promotionIds, int $maxUsesPerCustomer = 10): void
     {
         if (empty($promotionIds)) {
             throw new \LogicException('The promotion IDs must not be empty!');
@@ -38,7 +39,7 @@ trait PromotionBenchShortHands
 
         foreach ($promotionIds as $promotionId => $iterations)
         {
-            $totals = \iterator_to_array($this->generateTotals(iterations: $iterations, maxUsesPerCustomer: 10));
+            $totals = \iterator_to_array($this->generateTotals(iterations: $iterations, maxUsesPerCustomer: $maxUsesPerCustomer));
 
             static::getContainer()->get(Connection::class)
                 ->executeStatement('UPDATE promotion SET order_count = :count, orders_per_customer_count = :customerCount WHERE id = :id', [
