@@ -146,6 +146,17 @@ class PromotionCollectorTest extends TestCase
         static::assertGreaterThan(10.0, $addProductEvent->getMemory() / (1024**2)); // divide by 1024^2 to get MB value
     }
 
+    // TODO: Reproduce "Packet for query is too large" error: https://dev.mysql.com/doc/refman/9.7/en/packet-too-large.html.
+    //  See also: https://mariadb.com/docs/server/reference/error-codes/mariadb-error-codes-1100-to-1199/e1153.
+    //   Limit was set to `4,194,304/(1,024**2)` (`4M`), so a row larger than 4 MB would likely lead to this issue.
+    //  See also: https://dev.mysql.com/doc/refman/9.7/en/server-system-variables.html#sysvar_max_allowed_packet
+    //   > You must increase this value if you are using large BLOB columns or long strings.
+    //   > It should be as big as the largest BLOB you want to use. The protocol limit for max_allowed_packet is 1GB.
+    //   > The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
+    //  So it should be possible to actually set-up the limit for a single session to a lower value and provoke the error.
+    //   Of course it could also be caused by the client's limit, which is likely harder to reproduce. With PHP PDO client:
+    //  `SET @@session.max_allowed_packet := 4194304;`
+
     /**
      * Creates a promotion with a large number of random customer redemptions.
      * The customers do not exist, but that's not relevant for the scope of this test,
