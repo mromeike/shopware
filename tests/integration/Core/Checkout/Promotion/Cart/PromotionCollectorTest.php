@@ -3,6 +3,7 @@
 namespace Shopware\Tests\Integration\Core\Checkout\Promotion\Cart;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\ParameterType;
 use Ergebnis\PHPUnit\SlowTestDetector;
 use PHPUnit\Framework\TestCase;
@@ -49,7 +50,7 @@ class PromotionCollectorTest extends TestCase
      *   So whenever the promotion is used over a long timeframe, it will accumulate customer entries in the JSON.
      *  From that follows, that in a long-running system with many customers, it would lead to unexpected degradation over time.
      */
-    private const SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT = 100_000;
+    private const SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT = 200_000;
 
     /**
      * @see \Shopware\Core\Checkout\Promotion\Cart\PromotionCollector::REQUIRED_DAL_ASSOCIATIONS
@@ -64,24 +65,46 @@ class PromotionCollectorTest extends TestCase
         'setgroups.setGroupRules',
     ];
 
+    private IdsCollection $ids;
+
+    private Stopwatch $profiler;
+
     /**
      * @var EntityRepository<PromotionCollection>
      */
     private EntityRepository $promotionRepository;
 
-    private IdsCollection $ids;
-
     protected function setUp(): void
     {
         $this->ids = new IdsCollection();
+        $this->profiler = new Stopwatch(true);
         $this->promotionRepository = static::getContainer()->get(\sprintf('%s.repository', PromotionDefinition::ENTITY_NAME));
+
+        // Reset to original value `16777216` default (`16M`).
+        static::getContainer()->get(Connection::class)
+            ->executeStatement('SET @@GLOBAL.max_allowed_packet = :value;', [
+                'value' => 16*(1024**2),
+                /* = 16777216 */
+            ], ['value' => ParameterType::INTEGER]);
+    }
+
+    protected function tearDown(): void
+    {
+        dump(\array_map('strval', $this->profiler->getRootSectionEvents()));
+
+        // Reset to original value `16777216` default (`16M`).
+        static::getContainer()->get(Connection::class)
+            ->executeStatement('SET @@GLOBAL.max_allowed_packet = :value;', [
+                'value' => 16*(1024**2),
+                /* = 16777216 */
+            ], ['value' => ParameterType::INTEGER]);
     }
 
     #[SlowTestDetector\Attribute\MaximumDuration(5000)]
     public function testPromotionDiscountWithLargeNumberOfOrdersPerCustomerCount(): void
     {
         // Use the stopwatch as profiler (with more precise timing).
-        $profiler = new Stopwatch(true);
+        $profiler = $this->profiler;
         $profiler->start('baseline')->stop();
 
         $profiler->start('create-product');
@@ -134,7 +157,6 @@ class PromotionCollectorTest extends TestCase
         static::assertInstanceOf(PromotionCartAddedInformationError::class, $promotionError);
         static::assertStringContainsString('has been added', $promotionError->getMessage());
 
-        dump(\array_map('strval', $profiler->getRootSectionEvents()));
         return; // TODO: Complete assertions; add table output, if possible.
 
         // Make asserts on promotion fields' size/count, profiler min-loading speed and memory usage.
@@ -146,16 +168,48 @@ class PromotionCollectorTest extends TestCase
         static::assertGreaterThan(10.0, $addProductEvent->getMemory() / (1024**2)); // divide by 1024^2 to get MB value
     }
 
-    // TODO: Reproduce "Packet for query is too large" error: https://dev.mysql.com/doc/refman/9.7/en/packet-too-large.html.
-    //  See also: https://mariadb.com/docs/server/reference/error-codes/mariadb-error-codes-1100-to-1199/e1153.
-    //   Limit was set to `4,194,304/(1,024**2)` (`4M`), so a row larger than 4 MB would likely lead to this issue.
-    //  See also: https://dev.mysql.com/doc/refman/9.7/en/server-system-variables.html#sysvar_max_allowed_packet
-    //   > You must increase this value if you are using large BLOB columns or long strings.
-    //   > It should be as big as the largest BLOB you want to use. The protocol limit for max_allowed_packet is 1GB.
-    //   > The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
-    //  So it should be possible to actually set-up the limit for a single session to a lower value and provoke the error.
-    //   Of course it could also be caused by the client's limit, which is likely harder to reproduce. With PHP PDO client:
-    //  `SET @@session.max_allowed_packet := 4194304;`
+    /**
+     * Note: Reproduce "Packet for query is too large" error: https://dev.mysql.com/doc/refman/9.7/en/packet-too-large.html.
+     *  See also: https://mariadb.com/docs/server/reference/error-codes/mariadb-error-codes-1100-to-1199/e1153.
+     *   Limit was set to `4,194,304/(1,024**2)` (`4M`), so a row larger than 4 MB would likely lead to this issue.
+     *  See also: https://dev.mysql.com/doc/refman/9.7/en/server-system-variables.html#sysvar_max_allowed_packet
+     *   > You must increase this value if you are using large BLOB columns or long strings.
+     *   > It should be as big as the largest BLOB you want to use. The protocol limit for max_allowed_packet is 1GB.
+     *   > The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
+     *  So it should be possible to actually set-up the limit for a single session to a lower value and provoke the error.
+     *   Of course it could also be caused by the client's limit, which is likely harder to reproduce. With PHP PDO client:
+     *  `SET GLOBAL @@session.max_allowed_packet = 4194304;`
+     */
+    #[SlowTestDetector\Attribute\MaximumDuration(5000)]
+    public function testPromotionDiscountSizeForDatabasePacketError(): void
+    {
+        $profiler = $this->profiler;
+        $connection = static::getContainer()->get(Connection::class);
+
+        // Update to custom value `4194304` (`4M`).
+        $connection->executeStatement('SET @@GLOBAL.max_allowed_packet = :value;', [
+            'value' => 4*(1024**2),
+            /* = 4194304 */
+        ], ['value' => ParameterType::INTEGER]);
+
+        $profiler->start('run-test');
+        try {
+            $this->testPromotionDiscountWithLargeNumberOfOrdersPerCustomerCount();
+        } catch (DriverException $exception) {
+            // Ensure there is no warning about the nesting level from integration testing utils rollback.
+            $connection->beginTransaction();
+        }
+        $profiler->stop('run-test');
+
+        self::assertTrue(isset($exception));
+        \assert(isset($exception));
+        self::assertInstanceOf(DriverException::class, $exception);
+
+        self::expectException($exception::class);
+        self::expectExceptionMessage("SQLSTATE[08S01]: Communication link failure: 1153 Got a packet bigger than 'max_allowed_packet' bytes");
+
+        throw $exception;
+    }
 
     /**
      * Creates a promotion with a large number of random customer redemptions.
