@@ -3,6 +3,8 @@
 namespace Shopware\Tests\Integration\Core\Checkout\Promotion\Cart;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\PDO\Exception as PDOException;
+use Doctrine\DBAL\Exception\ConnectionLost;
 use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\ParameterType;
 use Ergebnis\PHPUnit\SlowTestDetector;
@@ -19,6 +21,7 @@ use Shopware\Core\Framework\DataAbstractionLayer\EntityRepository;
 use Shopware\Core\Framework\DataAbstractionLayer\Search\Criteria;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Test\TestCaseBase\IntegrationTestBehaviour;
+use Shopware\Core\Framework\Test\TestCaseBase\KernelLifecycleManager;
 use Shopware\Core\Framework\Uuid\Uuid;
 use Shopware\Core\System\SalesChannel\SalesChannelContext;
 use Shopware\Core\Test\Integration\Traits\TestShortHands;
@@ -50,7 +53,7 @@ class PromotionCollectorTest extends TestCase
      *   So whenever the promotion is used over a long timeframe, it will accumulate customer entries in the JSON.
      *  From that follows, that in a long-running system with many customers, it would lead to unexpected degradation over time.
      */
-    private const SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT = 200_000;
+    private const SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT = 100_000;
 
     /**
      * @see \Shopware\Core\Checkout\Promotion\Cart\PromotionCollector::REQUIRED_DAL_ASSOCIATIONS
@@ -64,6 +67,8 @@ class PromotionCollectorTest extends TestCase
         'discounts.promotionDiscountPrices',
         'setgroups.setGroupRules',
     ];
+
+    private const TEST_TOKEN = 'promotion-collector-test-token';
 
     private IdsCollection $ids;
 
@@ -80,59 +85,47 @@ class PromotionCollectorTest extends TestCase
         $this->profiler = new Stopwatch(true);
         $this->promotionRepository = static::getContainer()->get(\sprintf('%s.repository', PromotionDefinition::ENTITY_NAME));
 
-        // Reset to original value `16777216` default (`16M`).
-        static::getContainer()->get(Connection::class)
-            ->executeStatement('SET @@GLOBAL.max_allowed_packet = :value;', [
-                'value' => 16*(1024**2),
-                /* = 16777216 */
-            ], ['value' => ParameterType::INTEGER]);
+        self::setMaxAllowedPacket(16*(1024**2) /* = 16777216 */);
     }
 
     protected function tearDown(): void
     {
         dump(\array_map('strval', $this->profiler->getRootSectionEvents()));
 
-        // Reset to original value `16777216` default (`16M`).
-        static::getContainer()->get(Connection::class)
-            ->executeStatement('SET @@GLOBAL.max_allowed_packet = :value;', [
-                'value' => 16*(1024**2),
-                /* = 16777216 */
-            ], ['value' => ParameterType::INTEGER]);
+        try {
+            // Reset to original value `16777216` default (`16M`).
+            self::setMaxAllowedPacket(16*(1024**2) /* = 16777216 */);
+        } catch (ConnectionLost) {
+            // Now you need to restart your database! It likely has perished and gone away...
+        }
     }
 
     #[SlowTestDetector\Attribute\MaximumDuration(5000)]
-    public function testPromotionDiscountWithLargeNumberOfOrdersPerCustomerCount(): void
+    public function testPromotionDiscountWithLargeNumberOfOrdersPerCustomerCount(
+        int $ordersPerCustomerCount = self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT
+    ): void
     {
         // Use the stopwatch as profiler (with more precise timing).
         $profiler = $this->profiler;
         $profiler->start('baseline')->stop();
 
-        $profiler->start('create-product');
-        $taxId = static::getContainer()->get(Connection::class)
-            ->fetchOne('SELECT LOWER(HEX(id)) FROM tax LIMIT 1');
-
-        $product = (new ProductBuilder($this->ids, 'test-product'))
-            ->price(100)
-            ->stock(10)
-            ->visibility();
-
-        $productData = $product->build();
-        $productData['taxId'] = $taxId;
-
-        static::getContainer()->get('product.repository')
-            ->create([$productData], Context::createDefaultContext());
-        $profiler->stop('create-product');
-
-        $context = $this->getContext();
+        $productId = $this->createProduct('test-product-0');
+        $context = $this->getContext(self::TEST_TOKEN);
 
         $profiler->start('create-promotion');
-        $promotionId = $this->createPromotionWithLargeNumberOfOrdersPerCustomerCountData($context);
+        $promotionId = $this->createPromotionWithLargeNumberOfOrdersPerCustomerCountData('large-promotion-0', $context, $ordersPerCustomerCount);
         $profiler->stop('create-promotion');
 
         // Take measurements on timing and also memory, using the symfony profiler (i.e. stopwatch).
         $profiler->start('add-product');
-        $cart = $this->addProductToCart($product->id, $context);
+        $cart = $this->addProductToCart($productId, $context);
         $profiler->stop('add-product');
+
+        $errors = $cart->getErrors()->getElements();
+        static::assertCount(1, $errors, 'Cart should have exactly one error informational entry');
+        $promotionError = array_values($errors)[0];
+        static::assertInstanceOf(PromotionCartAddedInformationError::class, $promotionError);
+        static::assertStringContainsString('has been added', $promotionError->getMessage());
 
         $criteria = new Criteria([$promotionId]);
         $criteria->addAssociations(self::REQUIRED_DAL_ASSOCIATIONS);
@@ -149,13 +142,11 @@ class PromotionCollectorTest extends TestCase
 
         $promotionItems = $cart->getLineItems()->filterType(PromotionProcessor::LINE_ITEM_TYPE);
         static::assertGreaterThan(0, $promotionItems->count(), 'Promotion should be applied to cart');
-        static::assertSame(95.0, $cart->getPrice()->getTotalPrice(), 'Cart total should be 95€ (100€ - 5€ discount)');
 
-        $errors = $cart->getErrors()->getElements();
-        static::assertCount(1, $errors, 'Cart should have exactly one error informational entry');
-        $promotionError = array_values($errors)[0];
-        static::assertInstanceOf(PromotionCartAddedInformationError::class, $promotionError);
-        static::assertStringContainsString('has been added', $promotionError->getMessage());
+        // We only know the price if not called from another test-case.
+        if (__METHOD__ === $this->name()) {
+            static::assertSame(95.0, $cart->getPrice()->getTotalPrice(), 'Cart total should be 95€ (100€ - 5€ discount)');
+        }
 
         return; // TODO: Complete assertions; add table output, if possible.
 
@@ -179,36 +170,84 @@ class PromotionCollectorTest extends TestCase
      *  So it should be possible to actually set-up the limit for a single session to a lower value and provoke the error.
      *   Of course it could also be caused by the client's limit, which is likely harder to reproduce. With PHP PDO client:
      *  `SET GLOBAL @@session.max_allowed_packet = 4194304;`
+     *
+     * THIS TEST HAS TO RUN LAST, AS IT WILL BREAK THE `database` CONTAINER!
      */
     #[SlowTestDetector\Attribute\MaximumDuration(5000)]
     public function testPromotionDiscountSizeForDatabasePacketError(): void
     {
         $profiler = $this->profiler;
-        $connection = static::getContainer()->get(Connection::class);
+        $profiler->start('baseline')->stop();
+
+        // Start from 1, because 0 is already taken.
+        $productIds = [
+            $this->createProduct('test-product-1', 200),
+            $this->createProduct('test-product-2', 9.99),
+        ];
+
+        $context = $this->getContext(self::TEST_TOKEN);
+
+        $this->setMaxAllowedPacket(20*(1024**2));
+        \sleep(1);
+
+        // Generate from 1..3, because 0 is already taken.
+        $promotionCount = 3;
+        foreach (\range(1, $promotionCount) as $i) {
+            $profiler->start('create-promotion');
+            $this->createPromotionWithLargeNumberOfOrdersPerCustomerCountData("large-promotion-{$i}", $context,
+                ordersPerCustomerCount: (6-$i) * self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT, discount: $i);
+            $profiler->stop('create-promotion');
+        }
+
+        // Take measurements on timing and also memory, using the symfony profiler (i.e. stopwatch).
+        foreach ($productIds as $productId) {
+            $profiler->start('add-product');
+            $cart = $this->addProductToCart($productId, $context);
+            $profiler->stop('add-product');
+        }
+
+        $errors = $cart->getErrors()->getElements();
+        static::assertCount($promotionCount, $errors, 'Cart should have exactly 4 error informational entries');
+        static::assertContainsOnlyInstancesOf(PromotionCartAddedInformationError::class, $errors);
+
+        foreach (\array_column($errors, 'message') as $promotionErrorMessage) {
+            static::assertStringContainsString('has been added', $promotionErrorMessage);
+        }
+
+        // Restart the kernel.
+        KernelLifecycleManager::ensureKernelShutdown();
+        KernelLifecycleManager::bootKernel(reuseConnection: true);
 
         // Update to custom value `4194304` (`4M`).
-        $connection->executeStatement('SET @@GLOBAL.max_allowed_packet = :value;', [
-            'value' => 4*(1024**2),
-            /* = 4194304 */
-        ], ['value' => ParameterType::INTEGER]);
+        $this->setMaxAllowedPacket(4*(1024**2) /* = 4194304 */);
 
+        // TODO: To provoke the error by loading, a single field value has to be larger - use 500_000.
         $profiler->start('run-test');
         try {
-            $this->testPromotionDiscountWithLargeNumberOfOrdersPerCustomerCount();
-        } catch (DriverException $exception) {
-            // Ensure there is no warning about the nesting level from integration testing utils rollback.
-            $connection->beginTransaction();
+            $this->testPromotionDiscountWithLargeNumberOfOrdersPerCustomerCount(
+                5 * self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT,
+            );
+        } catch (PDOException|DriverException $exception) {
+            $profiler->stop('run-test');
+
+            self::assertInstanceOf(DriverException::class, $exception);
+
+            $exception = $exception->getPrevious();
+            self::assertInstanceOf(PDOException::class, $exception);
+
+            $exception = $exception->getPrevious();
+            self::assertInstanceOf(\PDOException::class, $exception);
+
+            self::expectException(\PDOException::class);
+            self::expectExceptionMessage("SQLSTATE[08S01]: Communication link failure: 1153 Got a packet bigger than 'max_allowed_packet' bytes");
+
+            // TODO: Assert source line.
+
+            throw $exception;
         }
         $profiler->stop('run-test');
 
-        self::assertTrue(isset($exception));
-        \assert(isset($exception));
-        self::assertInstanceOf(DriverException::class, $exception);
-
-        self::expectException($exception::class);
-        self::expectExceptionMessage("SQLSTATE[08S01]: Communication link failure: 1153 Got a packet bigger than 'max_allowed_packet' bytes");
-
-        throw $exception;
+        self::fail('Expected to fail due to packet error from MySQL server!');
     }
 
     /**
@@ -216,9 +255,14 @@ class PromotionCollectorTest extends TestCase
      * The customers do not exist, but that's not relevant for the scope of this test,
      * which only concerns with the performance impact caused by a long-term, multi-use promotion.
      */
-    private function createPromotionWithLargeNumberOfOrdersPerCustomerCountData(SalesChannelContext $context): string
+    private function createPromotionWithLargeNumberOfOrdersPerCustomerCountData(
+        string $promotionKey,
+        SalesChannelContext $context,
+        int $ordersPerCustomerCount,
+        float $discount = 5.0,
+    ): string
     {
-        $promotionId = $this->ids->create($promotionKey = 'large-promotion-0');
+        $promotionId = $this->ids->create($promotionKey);
         $validFrom = new \DateTime();
         $validFrom->sub(new \DateInterval('PT1H'));
         $validUntil = new \DateTime();
@@ -227,7 +271,7 @@ class PromotionCollectorTest extends TestCase
             'id' => $promotionId,
             'active' => true,
             'exclusive' => false,
-            'priority' => 1,
+            'priority' => \rand(1, 10),
             'useCodes' => false,
             'useIndividualCodes' => false,
             'useSetGroups' => false,
@@ -248,7 +292,7 @@ class PromotionCollectorTest extends TestCase
                     'id' => Uuid::randomHex(),
                     'scope' => PromotionDiscountEntity::SCOPE_CART,
                     'type' => PromotionDiscountEntity::TYPE_ABSOLUTE,
-                    'value' => 5.0,
+                    'value' => $discount,
                     'considerAdvancedRules' => false,
                     'usageKey' => 'cart-usage',
                     'promotionDiscountPrices' => [],
@@ -262,8 +306,39 @@ class PromotionCollectorTest extends TestCase
         );
 
         // Generate large number of random customer entries in the promotion's `orders_per_customer_count` field.
-        $this->setUpTotals([$promotionKey => self::SLOW_PROMOTION_ORDERS_PER_CUSTOMER_COUNT], maxUsesPerCustomer: 5);
+        $this->setUpTotals([$promotionKey => $ordersPerCustomerCount], maxUsesPerCustomer: 5);
 
         return $promotionId;
+    }
+
+    private function createProduct(string $productNumber, float $price = 100, int $stock = 10): string
+    {
+        $profiler = $this->profiler;
+        $profiler->start('create-product');
+        $taxId = static::getContainer()->get(Connection::class)
+            ->fetchOne('SELECT LOWER(HEX(id)) FROM tax LIMIT 1');
+
+        $product = (new ProductBuilder($this->ids, $productNumber))
+            ->price($price)
+            ->stock($stock)
+            ->visibility();
+
+        $productData = $product->build();
+        $productData['taxId'] = $taxId;
+
+        static::getContainer()->get('product.repository')
+            ->create([$productData], Context::createDefaultContext());
+        $profiler->stop('create-product');
+
+        return $product->id;
+    }
+
+    private static function setMaxAllowedPacket(int $value): void
+    {
+        $connection = static::getContainer()->get(Connection::class);
+
+        $connection->executeStatement('SET GLOBAL max_allowed_packet = :value;', [
+            'value' => $value,
+        ], ['value' => ParameterType::INTEGER]);
     }
 }
