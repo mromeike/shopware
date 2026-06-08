@@ -2,6 +2,7 @@
 
 namespace Shopware\Core\Checkout\Cart\SalesChannel;
 
+use Shopware\Core\Checkout\Cart\Cart;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\System\SalesChannel\SalesChannelContext;
 use Symfony\Component\HttpFoundation\Request;
@@ -14,5 +15,5 @@ abstract class AbstractCartLoadRoute
 {
     abstract public function getDecorated(): AbstractCartLoadRoute;
 
-    abstract public function load(Request $request, SalesChannelContext $context): CartResponse;
+    abstract public function load(Request $request, SalesChannelContext $context, ?Cart $cart = null): CartResponse;
 }

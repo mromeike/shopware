@@ -3,11 +3,13 @@
 namespace Shopware\Core\Checkout\Cart\SalesChannel;
 
 use Shopware\Core\Checkout\Cart\AbstractCartPersister;
+use Shopware\Core\Checkout\Cart\Cart;
 use Shopware\Core\Checkout\Cart\CartCalculator;
 use Shopware\Core\Checkout\Cart\CartFactory;
 use Shopware\Core\Checkout\Cart\Exception\CartTokenNotFoundException;
 use Shopware\Core\Checkout\Cart\TaxProvider\TaxProviderProcessor;
 use Shopware\Core\Framework\Adapter\Request\RequestParamHelper;
+use Shopware\Core\Framework\Feature;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Plugin\Exception\DecorationPatternException;
 use Shopware\Core\Framework\Routing\StoreApiRouteScope;
@@ -37,18 +39,24 @@ class CartLoadRoute extends AbstractCartLoadRoute
     }
 
     #[Route(path: '/store-api/checkout/cart', name: 'store-api.checkout.cart.read', methods: ['GET', 'POST'])]
-    public function load(Request $request, SalesChannelContext $context): CartResponse
+    public function load(Request $request, SalesChannelContext $context, ?Cart $cart = null): CartResponse
     {
         $token = RequestParamHelper::get($request, 'token', $context->getToken());
         $taxed = RequestParamHelper::get($request, 'taxed', false);
 
-        try {
-            $cart = $this->persister->load($token, $context);
-        } catch (CartTokenNotFoundException) {
-            $cart = $this->cartFactory->createNew($token);
+        if (!Feature::isActive('PERFORMANCE_TWEAKS')) {
+            $cart = null;
         }
 
-        $cart = $this->cartCalculator->calculate($cart, $context);
+        if (!$cart) {
+            try {
+                $cart = $this->persister->load($token, $context);
+            } catch (CartTokenNotFoundException) {
+                $cart = $this->cartFactory->createNew($token);
+            }
+
+            $cart = $this->cartCalculator->calculate($cart, $context);
+        }
 
         if ($taxed) {
             $this->taxProviderProcessor->process($cart, $context);

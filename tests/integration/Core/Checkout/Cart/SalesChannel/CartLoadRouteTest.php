@@ -131,6 +131,55 @@ class CartLoadRouteTest extends TestCase
             ]], Context::createDefaultContext());
         }
 
+        $this->browser->setServerParameter('HTTP_SW_CONTEXT_TOKEN', $this->ids->get('token'));
+
+        $this->browser
+            ->request(
+                'GET',
+                '/store-api/checkout/cart',
+                [
+                ]
+            );
+
+        $response = json_decode((string) $this->browser->getResponse()->getContent(), true, 512, \JSON_THROW_ON_ERROR);
+
+        static::assertSame('cart', $response['apiAlias']);
+        static::assertSame(10, $response['price']['totalPrice']);
+        static::assertCount(1, $response['lineItems']);
+        static::assertSame('Test', $response['lineItems'][0]['label']);
+        static::assertCount($errorCount, $response['errors']);
+    }
+
+    /**
+     * @return array<string, array<int|array<string, string|array<string, string>>|null>>
+     */
+    public static function dataProviderPaymentMethodRule(): array
+    {
+        return [
+            'No Rule' => [
+                null,
+                0,
+            ],
+            'Matching Rule' => [
+                ['type' => (new AlwaysValidRule())->getName()],
+                0,
+            ],
+            'Not Matching Rule' => [
+                [
+                    'type' => (new CartAmountRule())->getName(),
+                    'value' => [
+                        'operator' => Rule::OPERATOR_EQ,
+                        'amount' => '-1.0',
+                    ],
+                ],
+                1,
+            ],
+        ];
+    }
+
+    #[DataProvider('dataProviderPerformanceTweaksActive')]
+    public function testFilledCartOptimization(bool $usePerformanceTweaks): void
+    {
         $eventTracker = new class
         {
             /**
@@ -175,60 +224,38 @@ class CartLoadRouteTest extends TestCase
         self::getContainer()->get(EventDispatcherInterface::class)
             ->addListener(CartLoadedEvent::class, $eventTracker);
 
-        $this->browser->setServerParameter('HTTP_SW_CONTEXT_TOKEN', $this->ids->get('token'));
+        $_SERVER['PERFORMANCE_TWEAKS'] = $usePerformanceTweaks;
 
-        $this->browser
-            ->request(
-                'GET',
-                '/store-api/checkout/cart',
-                [
-                ]
-            );
+        $this->testFilledCart(null, 0);
+
+        unset($_SERVER['PERFORMANCE_TWEAKS']);
 
         // Remove the tracker.
         self::getContainer()->get(EventDispatcherInterface::class)
             ->removeListener(CartLoadedEvent::class, $eventTracker);
 
-        $response = json_decode((string) $this->browser->getResponse()->getContent(), true, 512, \JSON_THROW_ON_ERROR);
-
-        static::assertSame('cart', $response['apiAlias']);
-        static::assertSame(10, $response['price']['totalPrice']);
-        static::assertCount(1, $response['lineItems']);
-        static::assertSame('Test', $response['lineItems'][0]['label']);
-        static::assertCount($errorCount, $response['errors']);
-
-        // We registered two events, for the same cart tokane, from two different sources...
-        static::assertCount(2, $eventTracker->tracked);
-        static::assertSame($eventTracker->getEventCartToken(0), $eventTracker->getEventCartToken(1));
-        static::assertSame('/var/www/html/src/Core/Checkout/Cart/CartRuleLoader.php', $eventTracker->getTraceFile(0, CartPersister::class, 'load'));
-        static::assertSame('/var/www/html/src/Core/Checkout/Cart/SalesChannel/CartLoadRoute.php', $eventTracker->getTraceFile(1, CartPersister::class, 'load'));
+        if (!$usePerformanceTweaks) {
+            // We registered two events, for the same cart tokane, from two different sources...
+            static::assertCount(2, $eventTracker->tracked);
+            static::assertSame($this->ids->get('token'), $eventTracker->getEventCartToken(0));
+            static::assertSame($this->ids->get('token'), $eventTracker->getEventCartToken(1));
+            static::assertSame('/var/www/html/src/Core/Checkout/Cart/CartRuleLoader.php', $eventTracker->getTraceFile(0, CartPersister::class, 'load'));
+            static::assertSame('/var/www/html/src/Core/Checkout/Cart/SalesChannel/CartLoadRoute.php', $eventTracker->getTraceFile(1, CartPersister::class, 'load'));
+        } else {
+            // Now with PERFORMANCE_TWEAKS active, there will only one cart be loaded and used.
+            static::assertCount(1, $eventTracker->tracked);
+            static::assertSame($this->ids->get('token'), $eventTracker->getEventCartToken(0));
+            static::assertSame('/var/www/html/src/Core/Checkout/Cart/CartRuleLoader.php', $eventTracker->getTraceFile(0, CartPersister::class, 'load'));
+        }
     }
 
     /**
-     * @return array<string, array<int|array<string, string|array<string, string>>|null>>
+     * @return \Generator<string, bool>
      */
-    public static function dataProviderPaymentMethodRule(): array
+    public static function dataProviderPerformanceTweaksActive(): iterable
     {
-        return [
-            'No Rule' => [
-                null,
-                0,
-            ],
-            'Matching Rule' => [
-                ['type' => (new AlwaysValidRule())->getName()],
-                0,
-            ],
-            'Not Matching Rule' => [
-                [
-                    'type' => (new CartAmountRule())->getName(),
-                    'value' => [
-                        'operator' => Rule::OPERATOR_EQ,
-                        'amount' => '-1.0',
-                    ],
-                ],
-                1,
-            ],
-        ];
+        yield 'With performance tweaks active' => [true];
+        yield 'With performance tweaks not active' => [false];
     }
 
     public function testDeferredCartErrors(): void
