@@ -5,9 +5,11 @@ namespace Shopware\Tests\Integration\Core\Checkout\Cart\SalesChannel;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Shopware\Core\Checkout\Cart\AbstractCartPersister;
 use Shopware\Core\Checkout\Cart\Cart;
 use Shopware\Core\Checkout\Cart\CartPersister;
+use Shopware\Core\Checkout\Cart\Event\CartLoadedEvent;
 use Shopware\Core\Checkout\Cart\LineItem\LineItem;
 use Shopware\Core\Checkout\Cart\Rule\AlwaysValidRule;
 use Shopware\Core\Checkout\Cart\Rule\CartAmountRule;
@@ -26,6 +28,7 @@ use Shopware\Core\System\SalesChannel\Context\AbstractSalesChannelContextFactory
 use Shopware\Core\System\SalesChannel\Context\SalesChannelContextFactory;
 use Shopware\Core\Test\Stub\Framework\IdsCollection;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
+use Symfony\Component\EventDispatcher\Debug\TraceableEventDispatcher;
 
 /**
  * @internal
@@ -127,6 +130,26 @@ class CartLoadRouteTest extends TestCase
             ]], Context::createDefaultContext());
         }
 
+        $eventTracker = new class
+        {
+            /**
+             * @var array<array{
+             *     0: CartLoadedEvent,
+             *     1: array,
+             * }>
+             */
+            public array $tracked = [];
+
+            public function __invoke(CartLoadedEvent $event): void
+            {
+                $this->tracked[] = [$event->getCart(), \debug_backtrace()];
+            }
+        };
+
+        // Add the tracker.
+        self::getContainer()->get(EventDispatcherInterface::class)
+            ->addListener(CartLoadedEvent::class, $eventTracker);
+
         $this->browser->setServerParameter('HTTP_SW_CONTEXT_TOKEN', $this->ids->get('token'));
 
         $this->browser
@@ -137,6 +160,10 @@ class CartLoadRouteTest extends TestCase
                 ]
             );
 
+        // Remove the tracker.
+        self::getContainer()->get(EventDispatcherInterface::class)
+            ->removeListener(CartLoadedEvent::class, $eventTracker);
+
         $response = json_decode((string) $this->browser->getResponse()->getContent(), true, 512, \JSON_THROW_ON_ERROR);
 
         static::assertSame('cart', $response['apiAlias']);
@@ -144,6 +171,7 @@ class CartLoadRouteTest extends TestCase
         static::assertCount(1, $response['lineItems']);
         static::assertSame('Test', $response['lineItems'][0]['label']);
         static::assertCount($errorCount, $response['errors']);
+        static::assertCount(2, $eventTracker->tracked);
     }
 
     /**
