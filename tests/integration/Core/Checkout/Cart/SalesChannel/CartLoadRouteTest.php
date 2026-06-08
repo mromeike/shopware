@@ -4,6 +4,7 @@ namespace Shopware\Tests\Integration\Core\Checkout\Cart\SalesChannel;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\ExpectationFailedException;
 use PHPUnit\Framework\TestCase;
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Shopware\Core\Checkout\Cart\AbstractCartPersister;
@@ -142,7 +143,31 @@ class CartLoadRouteTest extends TestCase
 
             public function __invoke(CartLoadedEvent $event): void
             {
-                $this->tracked[] = [$event->getCart(), \debug_backtrace()];
+                $this->tracked[] = [$event, \debug_backtrace(\DEBUG_BACKTRACE_IGNORE_ARGS)];
+            }
+
+            public function getEventCartToken(int $i): ?string
+            {
+                if (!isset($this->tracked[$i][0])) {
+                    return null;
+                }
+
+                return $this->tracked[$i][0]->getCart()->getToken();
+            }
+
+            public function getTraceFile(int $i, string $class, string $function, ?int $line = null): ?string
+            {
+                if (!isset($this->tracked[$i][0])) {
+                    return null;
+                }
+
+                $trace = \array_find($this->tracked[$i][1], static function (array $trace) use ($class, $function, $line): bool {
+                    return $trace['class'] === $class
+                        && $trace['function'] === $function
+                        && (null === $line || $trace['line'] === $line);
+                });
+
+                return $trace['file'] ?? null;
             }
         };
 
@@ -171,7 +196,12 @@ class CartLoadRouteTest extends TestCase
         static::assertCount(1, $response['lineItems']);
         static::assertSame('Test', $response['lineItems'][0]['label']);
         static::assertCount($errorCount, $response['errors']);
+
+        // We registered two events, for the same cart tokane, from two different sources...
         static::assertCount(2, $eventTracker->tracked);
+        static::assertSame($eventTracker->getEventCartToken(0), $eventTracker->getEventCartToken(1));
+        static::assertSame('/var/www/html/src/Core/Checkout/Cart/CartRuleLoader.php', $eventTracker->getTraceFile(0, CartPersister::class, 'load'));
+        static::assertSame('/var/www/html/src/Core/Checkout/Cart/SalesChannel/CartLoadRoute.php', $eventTracker->getTraceFile(1, CartPersister::class, 'load'));
     }
 
     /**
