@@ -44,7 +44,7 @@ class CartLoadRoute extends AbstractCartLoadRoute
         $token = RequestParamHelper::get($request, 'token', $context->getToken());
         $taxed = RequestParamHelper::get($request, 'taxed', false);
 
-        if (!Feature::isActive('PERFORMANCE_TWEAKS')) {
+        if (!Feature::isActive('PERFORMANCE_TWEAKS') || $cart?->getToken() !== $token) {
             $cart = null;
         }
 
